@@ -27,23 +27,23 @@ import java.util.HashSet;
 import java.util.List;
 
 import com.amaze.filemanager.R;
-import com.amaze.filemanager.activities.MainActivity;
+import com.amaze.filemanager.application.AppConfig;
 import com.amaze.filemanager.asynchronous.management.ServiceWatcherUtil;
 import com.amaze.filemanager.asynchronous.services.CopyService;
 import com.amaze.filemanager.database.CryptHandler;
-import com.amaze.filemanager.database.models.EncryptedEntry;
+import com.amaze.filemanager.database.models.explorer.EncryptedEntry;
 import com.amaze.filemanager.exceptions.ShellNotRunningException;
 import com.amaze.filemanager.filesystem.HybridFile;
 import com.amaze.filemanager.filesystem.HybridFileParcelable;
 import com.amaze.filemanager.filesystem.Operations;
-import com.amaze.filemanager.fragments.MainFragment;
+import com.amaze.filemanager.filesystem.cloud.CloudUtil;
+import com.amaze.filemanager.filesystem.files.CryptUtil;
+import com.amaze.filemanager.filesystem.files.FileUtils;
+import com.amaze.filemanager.ui.activities.MainActivity;
+import com.amaze.filemanager.ui.fragments.MainFragment;
 import com.amaze.filemanager.utils.DataUtils;
 import com.amaze.filemanager.utils.OpenMode;
 import com.amaze.filemanager.utils.RootUtils;
-import com.amaze.filemanager.utils.application.AppConfig;
-import com.amaze.filemanager.utils.cloud.CloudUtil;
-import com.amaze.filemanager.utils.files.CryptUtil;
-import com.amaze.filemanager.utils.files.FileUtils;
 import com.cloudrail.si.interfaces.CloudStorage;
 
 import android.content.Context;
@@ -124,7 +124,7 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
             if (!source.renameTo(dest)) {
 
               // check if we have root
-              if (mainFrag.getMainActivity().isRootExplorer()) {
+              if (mainFrag != null && mainFrag.getMainActivity().isRootExplorer()) {
                 try {
                   if (!RootUtils.rename(baseFile.getPath(), destPath)) return false;
                 } catch (ShellNotRunningException e) {
@@ -181,36 +181,41 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
 
       for (int i = 0; i < paths.size(); i++) {
         List<HybridFile> targetFiles = new ArrayList<>();
+        List<HybridFileParcelable> sourcesFiles = new ArrayList<>();
         for (HybridFileParcelable f : files.get(i)) {
           targetFiles.add(new HybridFile(OpenMode.FILE, paths.get(i) + "/" + f.getName(context)));
         }
-        FileUtils.scanFile(context, files.toArray(new HybridFileParcelable[files.size()]));
+        for (List<HybridFileParcelable> hybridFileParcelables : files) {
+          sourcesFiles.addAll(hybridFileParcelables);
+        }
+        FileUtils.scanFile(
+            context, sourcesFiles.toArray(new HybridFileParcelable[sourcesFiles.size()]));
         FileUtils.scanFile(context, targetFiles.toArray(new HybridFile[targetFiles.size()]));
       }
 
       // updating encrypted db entry if any encrypted file was moved
-      AppConfig.runInBackground(
-          () -> {
-            for (int i = 0; i < paths.size(); i++) {
-              for (HybridFileParcelable file : files.get(i)) {
-                if (file.getName(context).endsWith(CryptUtil.CRYPT_EXTENSION)) {
-                  try {
-
-                    CryptHandler cryptHandler = new CryptHandler(context);
-                    EncryptedEntry oldEntry = cryptHandler.findEntry(file.getPath());
-                    EncryptedEntry newEntry = new EncryptedEntry();
-                    newEntry.setId(oldEntry.getId());
-                    newEntry.setPassword(oldEntry.getPassword());
-                    newEntry.setPath(paths.get(i) + "/" + file.getName(context));
-                    cryptHandler.updateEntry(oldEntry, newEntry);
-                  } catch (Exception e) {
-                    e.printStackTrace();
-                    // couldn't change the entry, leave it alone
+      AppConfig.getInstance()
+          .runInBackground(
+              () -> {
+                for (int i = 0; i < paths.size(); i++) {
+                  for (HybridFileParcelable file : files.get(i)) {
+                    if (file.getName(context).endsWith(CryptUtil.CRYPT_EXTENSION)) {
+                      try {
+                        CryptHandler cryptHandler = CryptHandler.getInstance();
+                        EncryptedEntry oldEntry = cryptHandler.findEntry(file.getPath());
+                        EncryptedEntry newEntry = new EncryptedEntry();
+                        newEntry.setId(oldEntry.getId());
+                        newEntry.setPassword(oldEntry.getPassword());
+                        newEntry.setPath(paths.get(i) + "/" + file.getName(context));
+                        cryptHandler.updateEntry(oldEntry, newEntry);
+                      } catch (Exception e) {
+                        e.printStackTrace();
+                        // couldn't change the entry, leave it alone
+                      }
+                    }
                   }
                 }
-              }
-            }
-          });
+              });
 
     } else {
 
